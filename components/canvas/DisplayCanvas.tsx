@@ -3,12 +3,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { Layer } from "./Layer";
 import { StrokeLayer } from "./StrokeLayer";
+import { MoveableLayer } from "./MoveableLayer";
+import { throttle } from "@/lib/throttle";
 
 /**
- * Live display surface — fullscreen, no controls.
- * Reactive queries auto-update when admin changes anything.
+ * Live display surface. Anyone with the URL can drag/resize/rotate
+ * layers (geometry only — no content edits, no add/remove). Layers
+ * marked `locked` in admin are uneditable here.
  */
 export function DisplayCanvas() {
   const display = useQuery(api.display.get);
@@ -17,16 +21,16 @@ export function DisplayCanvas() {
   const strokes = useQuery(api.strokes.list);
   const heartbeat = useMutation(api.display.heartbeat);
   const ensure = useMutation(api.display.ensure);
+  const publicMove = useMutation(api.layers.publicMove);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [cursorVisible, setCursorVisible] = useState(true);
+  const [selectedId, setSelectedId] = useState<Id<"layers"> | null>(null);
 
-  // Init the singleton display row on first load
+  // Init display row
   useEffect(() => {
-    if (display === null) {
-      ensure().catch(console.error);
-    }
+    if (display === null) ensure().catch(console.error);
   }, [display, ensure]);
 
   // Heartbeat
@@ -38,7 +42,7 @@ export function DisplayCanvas() {
     return () => clearInterval(t);
   }, [heartbeat]);
 
-  // Track size for stroke rendering
+  // Track size for stroke rendering + Moveable
   useEffect(() => {
     if (!containerRef.current) return;
     const el = containerRef.current;
@@ -51,7 +55,7 @@ export function DisplayCanvas() {
     return () => ro.disconnect();
   }, []);
 
-  // Auto-hide cursor after 3s
+  // Auto-hide cursor on idle
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const reset = () => {
@@ -67,7 +71,7 @@ export function DisplayCanvas() {
     };
   }, []);
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts: F = fullscreen, R = reload, Esc = deselect
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "f" || e.key === "F") {
@@ -78,6 +82,8 @@ export function DisplayCanvas() {
         }
       } else if (e.key === "r" || e.key === "R") {
         location.reload();
+      } else if (e.key === "Escape") {
+        setSelectedId(null);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -90,6 +96,28 @@ export function DisplayCanvas() {
     return m;
   }, [contents]);
 
+  // Throttle in-flight position updates so display tab and remote
+  // viewers see the layer move smoothly without spamming Convex.
+  const movePublic = useMemo(
+    () =>
+      throttle(
+        (
+          id: Id<"layers">,
+          fields: {
+            x?: number;
+            y?: number;
+            width?: number;
+            height?: number;
+            rotation?: number;
+          },
+        ) => {
+          publicMove({ id, ...fields }).catch(console.error);
+        },
+        100,
+      ),
+    [publicMove],
+  );
+
   const visibleLayers = (layers ?? []).filter((l) => l.visible !== false);
 
   return (
@@ -99,29 +127,28 @@ export function DisplayCanvas() {
         cursorVisible ? "" : "display-cursor-hidden"
       }`}
       style={{ backgroundColor: display?.background ?? "#ffffff" }}
+      onPointerDown={(e) => {
+        // Clicking empty surface deselects
+        if (e.target === e.currentTarget) setSelectedId(null);
+      }}
     >
-      {/* Drawing surface */}
       {strokes && size.w > 0 && (
         <StrokeLayer strokes={strokes} width={size.w} height={size.h} />
       )}
-      {/* Layers */}
       {visibleLayers.map((l) => (
-        <div
+        <MoveableLayer
           key={l._id}
-          className="absolute"
-          style={{
-            left: `${l.x * 100}%`,
-            top: `${l.y * 100}%`,
-            width: `${l.width * 100}%`,
-            height: `${l.height * 100}%`,
-            transform: `rotate(${l.rotation}deg)`,
-            transformOrigin: "center center",
-            opacity: l.opacity,
-            zIndex: l.zIndex + 1,
-          }}
-        >
-          <Layer layer={l} content={contentMap.get(l.contentId) ?? null} />
-        </div>
+          layer={l}
+          content={contentMap.get(l.contentId) ?? null}
+          surface={containerRef.current}
+          selected={selectedId === l._id}
+          interactive={true}
+          onSelect={() => setSelectedId(l._id)}
+          onPatch={(fields) => movePublic(l._id, fields)}
+          onCommit={(fields) =>
+            publicMove({ id: l._id, ...fields }).catch(console.error)
+          }
+        />
       ))}
     </div>
   );

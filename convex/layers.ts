@@ -108,6 +108,32 @@ export const setZ = mutation({
   },
 });
 
+/**
+ * Unauthenticated layer move/resize/rotate. Used by the public display
+ * page so anyone with the URL can rearrange content. Restricted to
+ * geometric fields (no content, z-order, opacity, lock, or visibility
+ * changes) and respects the `locked` flag set by admin.
+ */
+export const publicMove = mutation({
+  args: {
+    id: v.id("layers"),
+    x: v.optional(v.number()),
+    y: v.optional(v.number()),
+    width: v.optional(v.number()),
+    height: v.optional(v.number()),
+    rotation: v.optional(v.number()),
+  },
+  handler: async (ctx, { id, ...rest }) => {
+    const layer = await ctx.db.get(id);
+    if (!layer || layer.locked) return;
+    const cleaned = Object.fromEntries(
+      Object.entries(rest).filter(([, v]) => v !== undefined),
+    );
+    if (Object.keys(cleaned).length === 0) return;
+    await ctx.db.patch(id, { ...cleaned, updatedAt: Date.now() });
+  },
+});
+
 export const remove = mutation({
   args: { secret: v.string(), id: v.id("layers") },
   handler: async (ctx, { secret, id }) => {
