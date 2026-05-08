@@ -51,7 +51,7 @@ function ShareInner({ sessionId }: { sessionId: string }) {
     if (!peerRef.current || !session) return;
     peerRef.current.syncCandidates(session.viewerCandidates);
     if (session.viewerSdp && peerRef.current) {
-      peerRef.current.acceptAnswer(session.viewerSdp).catch(() => {});
+      peerRef.current.acceptAnswer(session.viewerSdp).catch(console.error);
     }
   }, [session?.viewerCandidates, session?.viewerSdp, session]);
 
@@ -120,7 +120,7 @@ function ShareInner({ sessionId }: { sessionId: string }) {
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     setStatus("ended");
-    if (notify) endSession({ sessionId }).catch(() => {});
+    if (notify) endSession({ sessionId }).catch(console.error);
   };
 
   // Cleanup on unmount

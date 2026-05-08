@@ -56,7 +56,7 @@ export function StreamRenderer({
           sessionId: p.sessionId,
           role: "viewer",
           candidate,
-        }).catch(() => {});
+        }).catch(console.error);
       },
       onTrack: (s) => setStream(s),
       onConnectionState: (s) => setState(s),

@@ -21,6 +21,7 @@ import {
   Copy,
 } from "lucide-react";
 import { uid } from "@/lib/utils";
+import { useEditor } from "@/stores/editor";
 
 interface Props {
   secret: string;
@@ -196,6 +197,7 @@ export function Library({ secret }: Props) {
   const removeContent = useMutation(api.contents.remove);
   const createLayer = useMutation(api.layers.create);
   const createSignaling = useMutation(api.signaling.create);
+  const setSelectedLayerId = useEditor((s) => s.setSelectedLayerId);
 
   const onAdd = async (tpl: (typeof TEMPLATES)[number]) => {
     const built = tpl.build();
@@ -219,11 +221,14 @@ export function Library({ secret }: Props) {
         hasAudio: payload.hasAudio,
       });
     }
-    await createLayer({ secret, contentId });
+    const layerId = await createLayer({ secret, contentId });
+    // Auto-select the new layer so the inspector (and stream-share QR) is visible
+    if (layerId) setSelectedLayerId(layerId);
   };
 
   const onPlace = async (id: Id<"contents">) => {
-    await createLayer({ secret, contentId: id });
+    const layerId = await createLayer({ secret, contentId: id });
+    if (layerId) setSelectedLayerId(layerId);
   };
 
   return (
