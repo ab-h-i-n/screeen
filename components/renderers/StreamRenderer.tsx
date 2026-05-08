@@ -5,6 +5,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Peer } from "@/lib/webrtc";
 import type { RendererProps } from "./types";
+import { Camera, Monitor } from "lucide-react";
 
 export interface StreamPayload {
   sessionId: string;
@@ -16,14 +17,14 @@ export interface StreamPayload {
 }
 
 /**
- * Stream renderer = the WebRTC viewer. Watches the signaling row for an
- * incoming offer; when seen, creates the peer, answers, and attaches the
- * resulting MediaStream to a <video>.
+ * Stream renderer routes to either the admin placeholder or the live
+ * WebRTC viewer based on `isAdmin`.
  *
- * Multi-instance: if the same sessionId appears on two layers, each
- * StreamRenderer creates its own peer (Convex queries are per-component).
- * To avoid duplicate connections we'd need a shared store keyed by
- * sessionId — kept simple here; one extra peer is acceptable for now.
+ * IMPORTANT: there is only ONE viewer slot in the signaling table. If
+ * both admin and display ran the viewer simultaneously they would race
+ * to write `viewerSdp` and one would be silently locked out at the
+ * publisher (signalingState moves past have-local-offer after the
+ * first answer). So admin gets a placeholder, display owns the stream.
  */
 export function StreamRenderer({
   payload,
@@ -31,6 +32,60 @@ export function StreamRenderer({
   isAdmin,
 }: RendererProps<StreamPayload>) {
   const p = { ...payload, ...(overrides ?? {}) };
+  if (isAdmin) {
+    return <AdminPlaceholder sessionId={p.sessionId} sourceType={p.sourceType} />;
+  }
+  return <ViewerStream payload={p} />;
+}
+
+function AdminPlaceholder({
+  sessionId,
+  sourceType,
+}: {
+  sessionId: string;
+  sourceType: "camera" | "screen";
+}) {
+  const session = useQuery(
+    api.signaling.getBySession,
+    sessionId ? { sessionId } : "skip",
+  );
+  const live = session?.status === "live";
+  const Icon = sourceType === "screen" ? Monitor : Camera;
+
+  return (
+    <div
+      className={`flex h-full w-full flex-col items-center justify-center gap-2 ${
+        live
+          ? "bg-emerald-950 text-emerald-200"
+          : "bg-zinc-800 text-zinc-300"
+      }`}
+      style={{ containerType: "size" }}
+    >
+      <Icon style={{ width: "min(18cqw, 30cqh)", height: "min(18cqw, 30cqh)" }} />
+      <div
+        className="flex items-center gap-1.5"
+        style={{ fontSize: "min(7cqw, 12cqh)", fontWeight: 600 }}
+      >
+        <span
+          className={`inline-block h-2 w-2 rounded-full ${
+            live ? "bg-green-400" : "animate-pulse bg-amber-400"
+          }`}
+        />
+        {live
+          ? `${sourceType === "screen" ? "Screen" : "Camera"} live`
+          : `Awaiting ${sourceType}`}
+      </div>
+      <div
+        className="text-center opacity-60"
+        style={{ fontSize: "min(4cqw, 7cqh)" }}
+      >
+        Visible on the display
+      </div>
+    </div>
+  );
+}
+
+function ViewerStream({ payload: p }: { payload: StreamPayload }) {
   const session = useQuery(
     api.signaling.getBySession,
     p.sessionId ? { sessionId: p.sessionId } : "skip",
@@ -132,17 +187,13 @@ export function StreamRenderer({
         className="h-full w-full"
         style={{
           objectFit: p.objectFit ?? "contain",
-          transform: p.mirror && p.sourceType === "camera" ? "scaleX(-1)" : undefined,
+          transform:
+            p.mirror && p.sourceType === "camera" ? "scaleX(-1)" : undefined,
         }}
       />
       {state !== "connected" && (
         <div className="absolute right-2 top-2 rounded bg-black/60 px-2 py-0.5 text-xs text-white">
           {state}
-        </div>
-      )}
-      {isAdmin && (
-        <div className="absolute left-2 top-2 rounded bg-black/60 px-2 py-0.5 text-xs text-white">
-          {p.sourceType === "screen" ? "🖥️ Screen" : "📷 Camera"}
         </div>
       )}
     </div>

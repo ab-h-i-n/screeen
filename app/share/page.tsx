@@ -36,11 +36,26 @@ function ShareInner({ sessionId }: { sessionId: string }) {
   const endSession = useMutation(api.signaling.end);
 
   const peerRef = useRef<Peer | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [stream, setStream] = useState<MediaStream | null>(null);
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [withAudio, setWithAudio] = useState(false);
+
+  // Attach the local stream to the <video> whenever both exist.
+  // The video element is conditionally rendered, so doing this in
+  // startStream() too early would leave videoRef null.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !stream) return;
+    v.srcObject = stream;
+    v.play().catch(() => {
+      /* autoplay can fail; user gesture already happened so it usually won't */
+    });
+    return () => {
+      v.srcObject = null;
+    };
+  }, [stream]);
 
   useEffect(() => {
     if (session?.hasAudio) setWithAudio(true);
@@ -61,9 +76,9 @@ function ShareInner({ sessionId }: { sessionId: string }) {
     setError(null);
     try {
       const audio = withAudio;
-      let stream: MediaStream;
+      let mediaStream: MediaStream;
       if (session.sourceType === "camera") {
-        stream = await navigator.mediaDevices.getUserMedia({
+        mediaStream = await navigator.mediaDevices.getUserMedia({
           video: {
             width: { ideal: 1280 },
             height: { ideal: 720 },
@@ -72,17 +87,16 @@ function ShareInner({ sessionId }: { sessionId: string }) {
           audio,
         });
       } else {
-        stream = await navigator.mediaDevices.getDisplayMedia({
+        mediaStream = await navigator.mediaDevices.getDisplayMedia({
           video: { frameRate: { ideal: 30, max: 60 } },
           audio,
         });
       }
 
-      streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
+      setStream(mediaStream);
 
-      // Detect "Stop sharing"
-      stream.getVideoTracks().forEach((t) => {
+      // Detect "Stop sharing" from the browser's screen-share toolbar
+      mediaStream.getVideoTracks().forEach((t) => {
         t.addEventListener("ended", () => stopStream(true));
       });
 
@@ -90,7 +104,7 @@ function ShareInner({ sessionId }: { sessionId: string }) {
         role: "publisher",
         onIceCandidate: (candidate) => {
           addCandidate({ sessionId, role: "publisher", candidate }).catch(
-            () => {},
+            console.error,
           );
         },
         onConnectionState: (s) => {
@@ -101,10 +115,15 @@ function ShareInner({ sessionId }: { sessionId: string }) {
       });
       peerRef.current = peer;
 
-      const offer = await peer.createOffer(stream);
-      await setPublisherSdp({ sessionId, sdp: offer, userAgent: navigator.userAgent });
+      const offer = await peer.createOffer(mediaStream);
+      await setPublisherSdp({
+        sessionId,
+        sdp: offer,
+        userAgent: navigator.userAgent,
+      });
       setStatus("connecting");
     } catch (e) {
+      console.error("startStream failed", e);
       const msg = e instanceof Error ? e.message : "Failed to start";
       setError(msg);
       setStatus("error");
@@ -116,9 +135,8 @@ function ShareInner({ sessionId }: { sessionId: string }) {
       peerRef.current.close();
       peerRef.current = null;
     }
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
-    if (videoRef.current) videoRef.current.srcObject = null;
+    stream?.getTracks().forEach((t) => t.stop());
+    setStream(null);
     setStatus("ended");
     if (notify) endSession({ sessionId }).catch(console.error);
   };
@@ -127,8 +145,9 @@ function ShareInner({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     return () => {
       peerRef.current?.close();
-      streamRef.current?.getTracks().forEach((t) => t.stop());
+      stream?.getTracks().forEach((t) => t.stop());
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (!session) {
@@ -160,19 +179,26 @@ function ShareInner({ sessionId }: { sessionId: string }) {
           </div>
         </div>
 
-        <div className="aspect-video w-full overflow-hidden rounded-lg bg-black">
-          {status === "idle" || status === "requesting" ? (
-            <div className="flex h-full items-center justify-center text-sm text-zinc-400">
-              {status === "idle" ? `Click start to share your ${sourceLabel}` : "Requesting permission…"}
+        <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-black">
+          {/* Always mount the video element so videoRef is set; show
+              placeholder text on top when there is no stream yet. */}
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className="h-full w-full object-contain"
+            style={{
+              transform:
+                session.sourceType === "camera" ? "scaleX(-1)" : undefined,
+            }}
+          />
+          {!stream && (
+            <div className="absolute inset-0 flex items-center justify-center text-sm text-zinc-400">
+              {status === "requesting"
+                ? "Requesting permission…"
+                : `Click start to share your ${sourceLabel}`}
             </div>
-          ) : (
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className="h-full w-full object-contain"
-            />
           )}
         </div>
 
