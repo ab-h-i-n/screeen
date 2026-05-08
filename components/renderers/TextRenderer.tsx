@@ -4,6 +4,7 @@ import type { RendererProps } from "./types";
 
 export interface TextPayload {
   text: string;
+  fontSize?: number; // px
   fontFamily?: string;
   fontWeight?: number | string;
   color?: string;
@@ -11,7 +12,6 @@ export interface TextPayload {
   bgColor?: string;
   padding?: number;
   borderRadius?: number;
-  fitToBox?: boolean;
 }
 
 export function TextRenderer({ payload, overrides }: RendererProps<TextPayload>) {
@@ -27,12 +27,12 @@ export function TextRenderer({ payload, overrides }: RendererProps<TextPayload>)
         textAlign: p.align ?? "center",
         padding: p.padding ?? 16,
         borderRadius: p.borderRadius ?? 0,
+        fontSize: `${p.fontSize ?? 64}px`,
+        lineHeight: 1.15,
       }}
     >
       <span
         style={{
-          fontSize: p.fitToBox ? "min(20cqw, 80cqh)" : undefined,
-          containerType: p.fitToBox ? "size" : undefined,
           width: "100%",
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",

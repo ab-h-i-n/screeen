@@ -100,6 +100,32 @@ function TextEditor({ payload, setPayload }: any) {
         />
       </Field>
       <div className="grid grid-cols-2 gap-2">
+        <Field label="Font size (px)">
+          <input
+            type="number"
+            min={8}
+            max={1024}
+            value={payload.fontSize ?? 64}
+            onChange={(e) => setPayload({ fontSize: Number(e.target.value) })}
+            className="w-full rounded border px-2 py-1 text-xs"
+          />
+        </Field>
+        <Field label="Weight">
+          <select
+            value={payload.fontWeight ?? 600}
+            onChange={(e) => setPayload({ fontWeight: Number(e.target.value) })}
+            className="w-full rounded border px-2 py-1 text-xs"
+          >
+            <option value={300}>Light</option>
+            <option value={400}>Regular</option>
+            <option value={500}>Medium</option>
+            <option value={600}>Semibold</option>
+            <option value={700}>Bold</option>
+            <option value={800}>Extra-bold</option>
+          </select>
+        </Field>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
         <Field label="Color">
           <input
             type="color"
@@ -128,14 +154,6 @@ function TextEditor({ payload, setPayload }: any) {
           <option value="right">Right</option>
         </select>
       </Field>
-      <label className="flex items-center gap-2 text-xs">
-        <input
-          type="checkbox"
-          checked={payload.fitToBox !== false}
-          onChange={(e) => setPayload({ fitToBox: e.target.checked })}
-        />
-        Fit text to box
-      </label>
     </>
   );
 }

@@ -112,7 +112,18 @@ export const remove = mutation({
   args: { secret: v.string(), id: v.id("layers") },
   handler: async (ctx, { secret, id }) => {
     assertAdmin(secret);
+    const layer = await ctx.db.get(id);
+    if (!layer) return;
+    const contentId = layer.contentId;
     await ctx.db.delete(id);
+
+    // If no other layer references this content, also drop it from the
+    // library so deleting the on-screen layer cleans up after itself.
+    const remaining = await ctx.db.query("layers").collect();
+    const stillUsed = remaining.some((l) => l.contentId === contentId);
+    if (!stillUsed) {
+      await ctx.db.delete(contentId);
+    }
   },
 });
 

@@ -45,7 +45,7 @@ const TEMPLATES: {
         bgColor: "transparent",
         fontWeight: 700,
         align: "center",
-        fitToBox: true,
+        fontSize: 96,
       },
     }),
   },
