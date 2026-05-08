@@ -209,6 +209,15 @@ function ShareInner({ sessionId }: { sessionId: string }) {
   const Icon = session.sourceType === "screen" ? Monitor : Camera;
   const sourceLabel = session.sourceType === "screen" ? "screen" : "camera";
 
+  // Capability check — getDisplayMedia is desktop-only; getUserMedia
+  // requires HTTPS (Vercel gives us that) and a real device.
+  const supported =
+    typeof navigator !== "undefined" &&
+    !!navigator.mediaDevices &&
+    (session.sourceType === "screen"
+      ? typeof navigator.mediaDevices.getDisplayMedia === "function"
+      : typeof navigator.mediaDevices.getUserMedia === "function");
+
   return (
     <div className="flex min-h-screen w-screen flex-col items-center justify-center bg-zinc-900 text-white">
       <div className="w-full max-w-2xl space-y-4 p-6">
@@ -248,6 +257,15 @@ function ShareInner({ sessionId }: { sessionId: string }) {
           )}
         </div>
 
+        {!supported && (
+          <div className="rounded border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+            <strong>Not supported on this browser.</strong>{" "}
+            {session.sourceType === "screen"
+              ? "Screen sharing isn't available on mobile browsers. Open this URL on a desktop browser (Chrome, Firefox, Safari, or Edge on macOS, Windows, or Linux)."
+              : "This browser doesn't expose camera access. Try Chrome, Safari, Firefox, or Edge."}
+          </div>
+        )}
+
         {error && (
           <div className="rounded border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-200">
             {error}
@@ -260,7 +278,8 @@ function ShareInner({ sessionId }: { sessionId: string }) {
               <button
                 type="button"
                 onClick={startStream}
-                className="rounded-md bg-white px-4 py-2 text-sm font-medium text-black hover:bg-zinc-200"
+                disabled={!supported}
+                className="rounded-md bg-white px-4 py-2 text-sm font-medium text-black hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Start sharing
               </button>
