@@ -11,3 +11,10 @@ next-env.d.ts
 *.tsbuildinfo
 .idea/
 .vscode/
+
+# Convex AI files (auto-generated, not part of source)
+convex/_generated/ai/
+.agents/
+AGENTS.md
+CLAUDE.md
+skills-lock.json
