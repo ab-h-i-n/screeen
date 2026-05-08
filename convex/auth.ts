@@ -1,12 +1,12 @@
+import { query } from "./_generated/server";
+import { v } from "convex/values";
+
 /**
  * Admin secret enforcement.
  *
- * The admin client reads a 32-char secret from the URL hash (#k=...) and
- * passes it with every mutation. We compare against the env var ADMIN_SECRET
- * which is set via `npx convex env set ADMIN_SECRET <value>`.
- *
- * Hash-based URL means the secret is never sent in HTTP request lines, so
- * it stays out of server access logs.
+ * Compared against the ADMIN_SECRET env var (set via
+ * `npx convex env set ADMIN_SECRET <value>`). Default project value
+ * is "123456" — change in production.
  */
 
 export function assertAdmin(secret: string | undefined): void {
@@ -20,3 +20,12 @@ export function assertAdmin(secret: string | undefined): void {
     throw new Error("Unauthorized: invalid admin secret");
   }
 }
+
+/** Public: check whether a candidate password matches. Used by the admin login form. */
+export const verify = query({
+  args: { secret: v.string() },
+  handler: (_ctx, { secret }) => {
+    const expected = process.env.ADMIN_SECRET;
+    return Boolean(expected) && secret === expected;
+  },
+});

@@ -3,14 +3,15 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { Trash2, ExternalLink, Wifi, WifiOff } from "lucide-react";
+import { Trash2, ExternalLink, Wifi, WifiOff, LogOut } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 interface Props {
   secret: string;
+  onLogout?: () => void;
 }
 
-export function TopBar({ secret }: Props) {
+export function TopBar({ secret, onLogout }: Props) {
   const display = useQuery(api.display.get);
   const setBg = useMutation(api.display.setBackground);
   const clearLayers = useMutation(api.layers.clear);
@@ -78,6 +79,17 @@ export function TopBar({ secret }: Props) {
           <Trash2 size={11} />
           Clear layers
         </button>
+        {onLogout && (
+          <button
+            type="button"
+            onClick={onLogout}
+            className="flex items-center gap-1 rounded border bg-white px-2 py-1 hover:bg-zinc-50"
+            title="Sign out"
+          >
+            <LogOut size={11} />
+            Sign out
+          </button>
+        )}
       </div>
     </div>
   );
