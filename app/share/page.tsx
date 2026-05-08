@@ -7,7 +7,7 @@ import { readSessionId } from "@/lib/secret";
 import { Peer } from "@/lib/webrtc";
 import { Camera, Monitor, Mic, MicOff, X } from "lucide-react";
 
-type Status = "idle" | "requesting" | "connecting" | "live" | "ended" | "error";
+type Status = "idle" | "requesting" | "live" | "ended" | "error";
 
 export default function SharePage() {
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -29,46 +29,115 @@ export default function SharePage() {
   return <ShareInner sessionId={sessionId} />;
 }
 
+interface PerViewer {
+  peer: Peer;
+  /** number of remote viewer candidates we've already applied */
+  viewerCandidatesApplied: number;
+  answered: boolean;
+}
+
 function ShareInner({ sessionId }: { sessionId: string }) {
   const session = useQuery(api.signaling.getBySession, { sessionId });
-  const setPublisherSdp = useMutation(api.signaling.setPublisherSdp);
-  const addCandidate = useMutation(api.signaling.addCandidate);
+  const viewers = useQuery(api.viewers.listForSession, { sessionId });
+  const markLive = useMutation(api.signaling.markLive);
+  const setPublisherOffer = useMutation(api.viewers.setPublisherOffer);
+  const addCandidate = useMutation(api.viewers.addCandidate);
   const endSession = useMutation(api.signaling.end);
 
-  const peerRef = useRef<Peer | null>(null);
+  // viewerId → per-viewer state (peer connection + bookkeeping)
+  const peersRef = useRef<Map<string, PerViewer>>(new Map());
+  const streamRef = useRef<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [withAudio, setWithAudio] = useState(false);
-
-  // Attach the local stream to the <video> whenever both exist.
-  // The video element is conditionally rendered, so doing this in
-  // startStream() too early would leave videoRef null.
-  useEffect(() => {
-    const v = videoRef.current;
-    if (!v || !stream) return;
-    v.srcObject = stream;
-    v.play().catch(() => {
-      /* autoplay can fail; user gesture already happened so it usually won't */
-    });
-    return () => {
-      v.srcObject = null;
-    };
-  }, [stream]);
+  const [viewerCount, setViewerCount] = useState(0);
 
   useEffect(() => {
     if (session?.hasAudio) setWithAudio(true);
   }, [session?.hasAudio]);
 
-  // Sync remote ICE candidates from viewer
+  // Attach local stream to <video> for self-preview.
   useEffect(() => {
-    if (!peerRef.current || !session) return;
-    peerRef.current.syncCandidates(session.viewerCandidates);
-    if (session.viewerSdp && peerRef.current) {
-      peerRef.current.acceptAnswer(session.viewerSdp).catch(console.error);
+    const v = videoRef.current;
+    if (!v || !stream) return;
+    v.srcObject = stream;
+    v.play().catch(() => {});
+    return () => {
+      v.srcObject = null;
+    };
+  }, [stream]);
+
+  // For each viewer row in the session, ensure we have a peer.
+  // - New viewer (no peer yet): create peer, addTracks, createOffer, write offer.
+  // - Existing viewer with viewerSdp answer: acceptAnswer.
+  // - New ICE candidates from viewer side: sync them to peer.
+  useEffect(() => {
+    if (!stream || !viewers) return;
+    setViewerCount(viewers.length);
+
+    for (const v of viewers) {
+      let entry = peersRef.current.get(v.viewerId);
+
+      if (!entry) {
+        const peer = new Peer({
+          role: "publisher",
+          onIceCandidate: (candidate) => {
+            addCandidate({
+              sessionId,
+              viewerId: v.viewerId,
+              role: "publisher",
+              candidate,
+            }).catch(console.error);
+          },
+        });
+        entry = { peer, viewerCandidatesApplied: 0, answered: false };
+        peersRef.current.set(v.viewerId, entry);
+
+        (async () => {
+          try {
+            const offer = await peer.createOffer(streamRef.current!);
+            await setPublisherOffer({
+              sessionId,
+              viewerId: v.viewerId,
+              sdp: offer,
+            });
+          } catch (e) {
+            console.error("publisher offer failed", e);
+          }
+        })();
+      }
+
+      // Accept answer if it just arrived
+      if (v.viewerSdp && !entry.answered) {
+        entry.answered = true;
+        entry.peer.acceptAnswer(v.viewerSdp).catch(console.error);
+      }
+
+      // Sync new viewer ICE candidates
+      if (v.viewerCandidates.length > entry.viewerCandidatesApplied) {
+        const fresh = v.viewerCandidates.slice(entry.viewerCandidatesApplied);
+        entry.viewerCandidatesApplied = v.viewerCandidates.length;
+        for (const c of fresh) {
+          try {
+            entry.peer.pc.addIceCandidate(JSON.parse(c)).catch(console.error);
+          } catch (e) {
+            console.warn(e);
+          }
+        }
+      }
     }
-  }, [session?.viewerCandidates, session?.viewerSdp, session]);
+
+    // Tear down peers for viewers that no longer exist
+    const liveIds = new Set(viewers.map((v) => v.viewerId));
+    for (const [id, entry] of peersRef.current) {
+      if (!liveIds.has(id)) {
+        entry.peer.close();
+        peersRef.current.delete(id);
+      }
+    }
+  }, [viewers, stream, sessionId, addCandidate, setPublisherOffer]);
 
   const startStream = async () => {
     if (!session) return;
@@ -93,35 +162,15 @@ function ShareInner({ sessionId }: { sessionId: string }) {
         });
       }
 
+      streamRef.current = mediaStream;
       setStream(mediaStream);
 
-      // Detect "Stop sharing" from the browser's screen-share toolbar
       mediaStream.getVideoTracks().forEach((t) => {
         t.addEventListener("ended", () => stopStream(true));
       });
 
-      const peer = new Peer({
-        role: "publisher",
-        onIceCandidate: (candidate) => {
-          addCandidate({ sessionId, role: "publisher", candidate }).catch(
-            console.error,
-          );
-        },
-        onConnectionState: (s) => {
-          if (s === "connected") setStatus("live");
-          if (s === "failed" || s === "disconnected") setStatus("connecting");
-          if (s === "closed") setStatus("ended");
-        },
-      });
-      peerRef.current = peer;
-
-      const offer = await peer.createOffer(mediaStream);
-      await setPublisherSdp({
-        sessionId,
-        sdp: offer,
-        userAgent: navigator.userAgent,
-      });
-      setStatus("connecting");
+      await markLive({ sessionId, userAgent: navigator.userAgent });
+      setStatus("live");
     } catch (e) {
       console.error("startStream failed", e);
       const msg = e instanceof Error ? e.message : "Failed to start";
@@ -131,11 +180,10 @@ function ShareInner({ sessionId }: { sessionId: string }) {
   };
 
   const stopStream = (notify = true) => {
-    if (peerRef.current) {
-      peerRef.current.close();
-      peerRef.current = null;
-    }
-    stream?.getTracks().forEach((t) => t.stop());
+    for (const entry of peersRef.current.values()) entry.peer.close();
+    peersRef.current.clear();
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
     setStream(null);
     setStatus("ended");
     if (notify) endSession({ sessionId }).catch(console.error);
@@ -144,10 +192,10 @@ function ShareInner({ sessionId }: { sessionId: string }) {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      peerRef.current?.close();
-      stream?.getTracks().forEach((t) => t.stop());
+      for (const entry of peersRef.current.values()) entry.peer.close();
+      peersRef.current.clear();
+      streamRef.current?.getTracks().forEach((t) => t.stop());
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (!session) {
@@ -180,8 +228,6 @@ function ShareInner({ sessionId }: { sessionId: string }) {
         </div>
 
         <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-black">
-          {/* Always mount the video element so videoRef is set; show
-              placeholder text on top when there is no stream yet. */}
           <video
             ref={videoRef}
             autoPlay
@@ -240,12 +286,17 @@ function ShareInner({ sessionId }: { sessionId: string }) {
             </button>
           )}
 
-          <div className="ml-auto flex items-center gap-2 text-xs">
+          <div className="ml-auto flex items-center gap-3 text-xs">
+            {status === "live" && (
+              <span className="rounded bg-zinc-800 px-2 py-1 text-zinc-300">
+                {viewerCount} viewer{viewerCount === 1 ? "" : "s"}
+              </span>
+            )}
             <span
               className={`inline-block h-2 w-2 rounded-full ${
                 status === "live"
                   ? "bg-green-400"
-                  : status === "connecting" || status === "requesting"
+                  : status === "requesting"
                     ? "animate-pulse bg-amber-400"
                     : status === "error"
                       ? "bg-rose-500"

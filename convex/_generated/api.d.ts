@@ -16,6 +16,7 @@ import type * as layers from "../layers.js";
 import type * as scenes from "../scenes.js";
 import type * as signaling from "../signaling.js";
 import type * as strokes from "../strokes.js";
+import type * as viewers from "../viewers.js";
 
 import type {
   ApiFromModules,
@@ -32,6 +33,7 @@ declare const fullApi: ApiFromModules<{
   scenes: typeof scenes;
   signaling: typeof signaling;
   strokes: typeof strokes;
+  viewers: typeof viewers;
 }>;
 
 /**

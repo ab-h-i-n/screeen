@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Peer } from "@/lib/webrtc";
+import { uid } from "@/lib/utils";
 import type { RendererProps } from "./types";
-import { Camera, Monitor } from "lucide-react";
 
 export interface StreamPayload {
   sessionId: string;
@@ -17,98 +17,71 @@ export interface StreamPayload {
 }
 
 /**
- * Stream renderer routes to either the admin placeholder or the live
- * WebRTC viewer based on `isAdmin`.
- *
- * IMPORTANT: there is only ONE viewer slot in the signaling table. If
- * both admin and display ran the viewer simultaneously they would race
- * to write `viewerSdp` and one would be silently locked out at the
- * publisher (signalingState moves past have-local-offer after the
- * first answer). So admin gets a placeholder, display owns the stream.
+ * StreamRenderer = a WebRTC viewer. Both admin and display run an
+ * instance, each with a unique viewerId, so the publisher can fan out
+ * separate peer connections per viewer.
  */
 export function StreamRenderer({
   payload,
   overrides,
-  isAdmin,
 }: RendererProps<StreamPayload>) {
   const p = { ...payload, ...(overrides ?? {}) };
-  if (isAdmin) {
-    return <AdminPlaceholder sessionId={p.sessionId} sourceType={p.sourceType} />;
-  }
-  return <ViewerStream payload={p} />;
-}
 
-function AdminPlaceholder({
-  sessionId,
-  sourceType,
-}: {
-  sessionId: string;
-  sourceType: "camera" | "screen";
-}) {
-  const session = useQuery(
-    api.signaling.getBySession,
-    sessionId ? { sessionId } : "skip",
-  );
-  const live = session?.status === "live";
-  const Icon = sourceType === "screen" ? Monitor : Camera;
+  // Stable viewerId per StreamRenderer instance, kept across re-renders.
+  // Each layer (and each browser tab) gets its own.
+  const viewerIdRef = useRef<string | null>(null);
+  if (viewerIdRef.current === null) viewerIdRef.current = uid();
+  const viewerId = viewerIdRef.current;
 
-  return (
-    <div
-      className={`flex h-full w-full flex-col items-center justify-center gap-2 ${
-        live
-          ? "bg-emerald-950 text-emerald-200"
-          : "bg-zinc-800 text-zinc-300"
-      }`}
-      style={{ containerType: "size" }}
-    >
-      <Icon style={{ width: "min(18cqw, 30cqh)", height: "min(18cqw, 30cqh)" }} />
-      <div
-        className="flex items-center gap-1.5"
-        style={{ fontSize: "min(7cqw, 12cqh)", fontWeight: 600 }}
-      >
-        <span
-          className={`inline-block h-2 w-2 rounded-full ${
-            live ? "bg-green-400" : "animate-pulse bg-amber-400"
-          }`}
-        />
-        {live
-          ? `${sourceType === "screen" ? "Screen" : "Camera"} live`
-          : `Awaiting ${sourceType}`}
-      </div>
-      <div
-        className="text-center opacity-60"
-        style={{ fontSize: "min(4cqw, 7cqh)" }}
-      >
-        Visible on the display
-      </div>
-    </div>
-  );
-}
-
-function ViewerStream({ payload: p }: { payload: StreamPayload }) {
   const session = useQuery(
     api.signaling.getBySession,
     p.sessionId ? { sessionId: p.sessionId } : "skip",
   );
-  const setViewerSdp = useMutation(api.signaling.setViewerSdp);
-  const addCandidate = useMutation(api.signaling.addCandidate);
+  const myViewer = useQuery(
+    api.viewers.getOne,
+    p.sessionId ? { sessionId: p.sessionId, viewerId } : "skip",
+  );
+  const announce = useMutation(api.viewers.announce);
+  const remove = useMutation(api.viewers.remove);
+  const setViewerAnswer = useMutation(api.viewers.setViewerAnswer);
+  const addCandidate = useMutation(api.viewers.addCandidate);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const peerRef = useRef<Peer | null>(null);
+  const candidatesAppliedRef = useRef(0);
+  const answeredRef = useRef(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [state, setState] = useState<RTCPeerConnectionState | "idle">("idle");
 
-  // Create peer + answer when offer arrives
+  // Announce ourselves once we have a sessionId. Re-announce when
+  // session re-opens after end (so we get a fresh row).
   useEffect(() => {
-    if (!session?.publisherSdp || !p.sessionId) return;
+    if (!p.sessionId) return;
+    announce({ sessionId: p.sessionId, viewerId }).catch(console.error);
+  }, [p.sessionId, viewerId, announce, session?.status]);
+
+  // Best-effort cleanup when the component unmounts or session ends.
+  useEffect(() => {
+    return () => {
+      if (p.sessionId) {
+        remove({ sessionId: p.sessionId, viewerId }).catch(() => {});
+      }
+      peerRef.current?.close();
+      peerRef.current = null;
+    };
+  }, [p.sessionId, viewerId, remove]);
+
+  // When the publisher writes our offer, build a peer and answer.
+  useEffect(() => {
+    if (!myViewer?.publisherSdp || !p.sessionId) return;
     if (peerRef.current) return;
-    if (session.status === "ended") return;
 
     const peer = new Peer({
       role: "viewer",
       onIceCandidate: (candidate) => {
         addCandidate({
           sessionId: p.sessionId,
+          viewerId,
           role: "viewer",
           candidate,
         }).catch(console.error);
@@ -117,65 +90,71 @@ function ViewerStream({ payload: p }: { payload: StreamPayload }) {
       onConnectionState: (s) => setState(s),
     });
     peerRef.current = peer;
+    answeredRef.current = false;
+    candidatesAppliedRef.current = 0;
 
     (async () => {
       try {
-        const answer = await peer.createAnswer(session.publisherSdp!);
-        await setViewerSdp({ sessionId: p.sessionId, sdp: answer });
+        const answer = await peer.createAnswer(myViewer.publisherSdp!);
+        await setViewerAnswer({
+          sessionId: p.sessionId,
+          viewerId,
+          sdp: answer,
+        });
       } catch (e) {
         console.error("answer failed", e);
       }
     })();
+  }, [myViewer?.publisherSdp, p.sessionId, viewerId, addCandidate, setViewerAnswer]);
 
-    return () => {
-      peer.close();
-      peerRef.current = null;
-      setStream(null);
-      setState("idle");
-    };
-  }, [session?.publisherSdp, session?.status, p.sessionId, addCandidate, setViewerSdp]);
-
-  // Sync remote ICE candidates
+  // Sync remote ICE candidates from publisher.
   useEffect(() => {
-    if (!peerRef.current || !session) return;
-    peerRef.current.syncCandidates(session.publisherCandidates);
-  }, [session?.publisherCandidates, session]);
+    if (!peerRef.current || !myViewer) return;
+    const total = myViewer.publisherCandidates.length;
+    const applied = candidatesAppliedRef.current;
+    if (total <= applied) return;
+    const fresh = myViewer.publisherCandidates.slice(applied);
+    candidatesAppliedRef.current = total;
+    for (const c of fresh) {
+      try {
+        peerRef.current.pc.addIceCandidate(JSON.parse(c)).catch(console.error);
+      } catch (e) {
+        console.warn(e);
+      }
+    }
+  }, [myViewer?.publisherCandidates]);
 
-  // Attach stream to <video>
+  // Attach stream to <video>.
   useEffect(() => {
     const v = videoRef.current;
     if (!v || !stream) return;
     v.srcObject = stream;
+    v.play().catch(() => {});
     return () => {
       v.srcObject = null;
     };
   }, [stream]);
 
-  // Reset peer when session ends so we accept future re-publishes
+  // If session ends, tear down the peer so we accept a future restart.
   useEffect(() => {
     if (session?.status === "ended" && peerRef.current) {
       peerRef.current.close();
       peerRef.current = null;
       setStream(null);
+      setState("idle");
+      answeredRef.current = false;
+      candidatesAppliedRef.current = 0;
     }
   }, [session?.status]);
 
-  if (!p.sessionId) {
-    return <Placeholder>No session</Placeholder>;
-  }
-  if (!session) {
-    return <Placeholder>Connecting…</Placeholder>;
-  }
-  if (session.status === "waiting" || !session.publisherSdp) {
-    return (
-      <Placeholder>
-        Waiting for {p.sourceType === "screen" ? "screen share" : "camera"}…
-      </Placeholder>
-    );
-  }
-  if (session.status === "ended") {
-    return <Placeholder>Stream ended</Placeholder>;
-  }
+  const placeholder = useMemo(() => {
+    if (!p.sessionId) return "No session";
+    if (!session) return "Connecting…";
+    if (session.status === "ended") return "Stream ended";
+    if (session.status === "waiting" || !stream)
+      return `Waiting for ${p.sourceType === "screen" ? "screen share" : "camera"}…`;
+    return null;
+  }, [p.sessionId, session, stream, p.sourceType]);
 
   return (
     <div className="relative h-full w-full bg-black">
@@ -189,24 +168,22 @@ function ViewerStream({ payload: p }: { payload: StreamPayload }) {
           objectFit: p.objectFit ?? "contain",
           transform:
             p.mirror && p.sourceType === "camera" ? "scaleX(-1)" : undefined,
+          opacity: stream ? 1 : 0,
         }}
       />
-      {state !== "connected" && (
+      {placeholder && (
+        <div className="absolute inset-0 flex items-center justify-center bg-zinc-900 text-sm text-zinc-300">
+          <div className="flex items-center gap-2">
+            <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-400" />
+            {placeholder}
+          </div>
+        </div>
+      )}
+      {stream && state !== "connected" && (
         <div className="absolute right-2 top-2 rounded bg-black/60 px-2 py-0.5 text-xs text-white">
           {state}
         </div>
       )}
-    </div>
-  );
-}
-
-function Placeholder({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex h-full w-full items-center justify-center bg-zinc-900 text-sm text-zinc-300">
-      <div className="flex items-center gap-2">
-        <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-400" />
-        {children}
-      </div>
     </div>
   );
 }

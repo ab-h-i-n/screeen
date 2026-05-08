@@ -68,12 +68,29 @@ export default defineSchema({
     sessionId: v.string(),
     sourceType: v.union(v.literal("camera"), v.literal("screen")),
     hasAudio: v.boolean(),
-    publisherSdp: v.union(v.string(), v.null()),
-    viewerSdp: v.union(v.string(), v.null()),
-    publisherCandidates: v.array(v.string()),
-    viewerCandidates: v.array(v.string()),
+    // Legacy single-viewer fields — kept optional for back-compat with
+    // rows created before the multi-viewer refactor. New rows omit them.
+    publisherSdp: v.optional(v.union(v.string(), v.null())),
+    viewerSdp: v.optional(v.union(v.string(), v.null())),
+    publisherCandidates: v.optional(v.array(v.string())),
+    viewerCandidates: v.optional(v.array(v.string())),
     status: v.union(v.literal("waiting"), v.literal("live"), v.literal("ended")),
     publisherUserAgent: v.optional(v.string()),
     startedAt: v.optional(v.number()),
   }).index("by_session", ["sessionId"]),
+
+  // One row per (session, viewer). Each viewer has its own SDP slot
+  // and ICE candidate arrays so multiple admins/displays can subscribe
+  // to the same publisher concurrently.
+  viewers: defineTable({
+    sessionId: v.string(),
+    viewerId: v.string(),
+    publisherSdp: v.union(v.string(), v.null()),
+    viewerSdp: v.union(v.string(), v.null()),
+    publisherCandidates: v.array(v.string()),
+    viewerCandidates: v.array(v.string()),
+    lastSeenAt: v.number(),
+  })
+    .index("by_session", ["sessionId"])
+    .index("by_session_viewer", ["sessionId", "viewerId"]),
 });
