@@ -26,9 +26,7 @@ export default defineSchema({
     ),
     label: v.string(),
     payload: v.any(),
-  })
-    .index("by_type", ["type"])
-    .index("by_creation", ["_creationTime"]),
+  }).index("by_type", ["type"]),
 
   layers: defineTable({
     contentId: v.id("contents"),

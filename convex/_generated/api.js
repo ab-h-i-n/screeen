@@ -1,13 +1,23 @@
 /* eslint-disable */
 /**
- * Stub. Overwritten by `npx convex dev`.
+ * Generated `api` utility.
  *
- * Convex's reactive client looks up functions by string name via this proxy,
- * so a Proxy that returns nested string-named handles is enough at runtime.
- * Once `convex dev` runs, this is replaced with a real codegen file.
+ * THIS CODE IS AUTOMATICALLY GENERATED.
+ *
+ * To regenerate, run `npx convex dev`.
+ * @module
  */
 
-import { anyApi } from "convex/server";
+import { anyApi, componentsGeneric } from "convex/server";
 
+/**
+ * A utility for referencing Convex functions in your app's API.
+ *
+ * Usage:
+ * ```js
+ * const myFunctionReference = api.myModule.myFunction;
+ * ```
+ */
 export const api = anyApi;
 export const internal = anyApi;
+export const components = componentsGeneric();
