@@ -126,8 +126,7 @@ function Login({ onSuccess }: { onSuccess: (pw: string) => void }) {
           {busy ? "Checking…" : "Sign in"}
         </button>
         <p className="text-[11px] text-muted-foreground">
-          Default password is <code className="rounded bg-muted px-1">123456</code>.
-          Change it via{" "}
+          Set or rotate via{" "}
           <code className="rounded bg-muted px-1">npx convex env set ADMIN_SECRET</code>.
         </p>
       </form>

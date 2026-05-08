@@ -4,9 +4,8 @@ import { v } from "convex/values";
 /**
  * Admin secret enforcement.
  *
- * Compared against the ADMIN_SECRET env var (set via
- * `npx convex env set ADMIN_SECRET <value>`). Default project value
- * is "123456" — change in production.
+ * Compared against the ADMIN_SECRET env var, set via:
+ *   npx convex env set ADMIN_SECRET <value>
  */
 
 export function assertAdmin(secret: string | undefined): void {
