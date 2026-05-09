@@ -10,6 +10,7 @@ import { Inspector } from "@/components/admin/Inspector";
 import { Toolbar } from "@/components/admin/Toolbar";
 import { TopBar } from "@/components/admin/TopBar";
 import { ScenesPanel } from "@/components/admin/ScenesPanel";
+import { LayersPanel } from "@/components/admin/LayersPanel";
 
 export default function AdminPage() {
   const [secret, setSecret] = useState<string | null>(null);
@@ -59,6 +60,7 @@ export default function AdminPage() {
           <div className="flex-1 overflow-hidden">
             <Library secret={secret} />
           </div>
+          <LayersPanel secret={secret} />
           <ScenesPanel secret={secret} />
         </aside>
         <main className="overflow-hidden bg-zinc-100 p-4">
