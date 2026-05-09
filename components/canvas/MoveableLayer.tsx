@@ -84,7 +84,7 @@ export function MoveableLayer({
           cursor: interactive ? (layer.locked ? "not-allowed" : "move") : "default",
         }}
       >
-        <Layer layer={layer} content={content} isAdmin />
+        <Layer layer={layer} content={content} isAdmin={!layer.locked} />
       </div>
 
       {selected && interactive && !layer.locked && surface && (
